@@ -647,10 +647,15 @@ static optional_ptr<HTTPMetadataCache> TryGetMetadataCache(optional_ptr<FileOpen
 }
 
 void HTTPFileHandle::FullDownload(HTTPFileSystem &hfs, bool &should_write_cache) {
-	// We are going to download the file at full, we don't need to do no head request.
 	const auto &cache_entry = http_params.state->GetCachedFile(path);
 	cached_file_handle = cache_entry->GetHandle();
 	if (!cached_file_handle->Initialized()) {
+		// If file size is not yet known, do a HEAD request now so we can decide whether parallel ranged GETs are
+		// worthwhile.
+		if (length == 0) {
+			LoadFileInfo();
+		}
+
 		const uint64_t concurrency = http_params.http_download_max_concurrency;
 		const uint64_t threshold = http_params.http_download_parallel_threshold;
 		const uint64_t chunk_size = http_params.http_download_chunk_size;
