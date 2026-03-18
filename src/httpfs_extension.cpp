@@ -92,6 +92,21 @@ static void LoadInternal(ExtensionLoader &loader) {
 	config.AddExtensionOption("unsafe_disable_etag_checks", "Disable checks on ETag consistency", LogicalType::BOOLEAN,
 	                          Value(false));
 
+	// Parallel downloader config
+	config.AddExtensionOption(
+	    "http_download_max_concurrency",
+	    "Maximum number of concurrent ranged HTTP GET requests used to download a single file when "
+	    "force_download=true. Setting to 1 disables parallel download and uses a single full GET.",
+	    LogicalType::UBIGINT, Value::UBIGINT(HTTPFSParams::DEFAULT_HTTP_DOWNLOAD_MAX_CONCURRENCY));
+	config.AddExtensionOption(
+	    "http_download_parallel_threshold",
+	    "Minimum file size in bytes above which parallel ranged download is used when force_download=true.",
+	    LogicalType::UBIGINT, Value::UBIGINT(HTTPFSParams::DEFAULT_HTTP_DOWNLOAD_PARALLEL_THRESHOLD));
+	config.AddExtensionOption(
+	    "http_download_chunk_size",
+	    "Size in bytes of each individual ranged GET chunk when using parallel download with force_download=true.",
+	    LogicalType::UBIGINT, Value::UBIGINT(HTTPFSParams::DEFAULT_HTTP_DOWNLOAD_CHUNK_SIZE));
+
 	// HuggingFace options
 	config.AddExtensionOption("hf_max_per_page", "Debug option to limit number of items returned in list requests",
 	                          LogicalType::UBIGINT, Value::UBIGINT(0));

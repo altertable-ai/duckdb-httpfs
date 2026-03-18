@@ -16,6 +16,7 @@
 #include "http_state.hpp"
 
 #include <chrono>
+#include <future>
 #include <map>
 #include <string>
 #include <thread>
@@ -57,6 +58,11 @@ unique_ptr<HTTPParams> HTTPFSUtil::InitializeParameters(optional_ptr<FileOpener>
 	FileOpener::TryGetCurrentSetting(opener, "ca_cert_file", result->ca_cert_file, info);
 	FileOpener::TryGetCurrentSetting(opener, "hf_max_per_page", result->hf_max_per_page, info);
 	FileOpener::TryGetCurrentSetting(opener, "unsafe_disable_etag_checks", result->unsafe_disable_etag_checks, info);
+	FileOpener::TryGetCurrentSetting(opener, "http_download_max_concurrency", result->http_download_max_concurrency,
+	                                 info);
+	FileOpener::TryGetCurrentSetting(opener, "http_download_parallel_threshold",
+	                                 result->http_download_parallel_threshold, info);
+	FileOpener::TryGetCurrentSetting(opener, "http_download_chunk_size", result->http_download_chunk_size, info);
 
 	{
 		auto db = FileOpener::TryGetDatabase(opener);
@@ -645,14 +651,116 @@ void HTTPFileHandle::FullDownload(HTTPFileSystem &hfs, bool &should_write_cache)
 	const auto &cache_entry = http_params.state->GetCachedFile(path);
 	cached_file_handle = cache_entry->GetHandle();
 	if (!cached_file_handle->Initialized()) {
-		// Try to fully download the file first
-		const auto full_download_result = hfs.GetRequest(*this, path, {});
-		if (full_download_result->status != HTTPStatusCode::OK_200) {
-			throw HTTPException(*full_download_result, "Full download failed to to URL \"%s\": %d (%s)",
-			                    full_download_result->url, static_cast<int>(full_download_result->status),
-			                    full_download_result->GetError());
+		const uint64_t concurrency = http_params.http_download_max_concurrency;
+		const uint64_t threshold = http_params.http_download_parallel_threshold;
+		const uint64_t chunk_size = http_params.http_download_chunk_size;
+
+		// Use parallel ranged GETs when: concurrency > 1, file size is known and large enough,
+		// and chunk_size is sensible.
+		bool use_parallel = (concurrency > 1) && (length >= threshold) && (chunk_size > 0);
+
+		if (use_parallel) {
+			// Preallocate the full destination buffer once.
+			cached_file_handle->AllocateBuffer(length);
+
+			// Build the list of chunks.
+			struct Chunk {
+				idx_t offset;
+				idx_t size;
+			};
+			vector<Chunk> chunks;
+			idx_t remaining = length;
+			idx_t offset = 0;
+			while (remaining > 0) {
+				idx_t sz = MinValue<idx_t>(chunk_size, remaining);
+				chunks.push_back({offset, sz});
+				offset += sz;
+				remaining -= sz;
+			}
+
+			// Download chunks using a bounded thread pool (semaphore via a counter).
+			// We store futures so we can propagate exceptions from worker threads.
+			char *dest = cached_file_handle->GetMutableData();
+
+			// Shared error state — first exception wins.
+			mutex error_mutex;
+			std::exception_ptr first_error;
+
+			// A simple semaphore to bound active threads.
+			mutex sem_mutex;
+			std::condition_variable sem_cv;
+			idx_t active_threads = 0;
+
+			vector<std::thread> workers;
+			workers.reserve(chunks.size());
+
+			for (const auto &chunk : chunks) {
+				// Wait until a slot is available.
+				{
+					unique_lock<mutex> lk(sem_mutex);
+					sem_cv.wait(lk, [&]() { return active_threads < concurrency; });
+					++active_threads;
+				}
+
+				// Check if an error already occurred — abort early.
+				{
+					lock_guard<mutex> lk(error_mutex);
+					if (first_error) {
+						lock_guard<mutex> sem_lk(sem_mutex);
+						--active_threads;
+						break;
+					}
+				}
+
+				workers.emplace_back([&, chunk]() {
+					try {
+						auto response =
+						    hfs.GetRangeRequest(*this, path, {}, chunk.offset, dest + chunk.offset, chunk.size);
+						if (response && !response->Success() &&
+						    response->status != HTTPStatusCode::PartialContent_206 &&
+						    response->status != HTTPStatusCode::Accepted_202) {
+							throw HTTPException(*response,
+							                    "Parallel chunk download failed for URL \"%s\" "
+							                    "at offset %llu: HTTP %d",
+							                    path, (unsigned long long)chunk.offset,
+							                    static_cast<int>(response->status));
+						}
+					} catch (...) {
+						lock_guard<mutex> lk(error_mutex);
+						if (!first_error) {
+							first_error = std::current_exception();
+						}
+					}
+					{
+						lock_guard<mutex> lk(sem_mutex);
+						--active_threads;
+					}
+					sem_cv.notify_one();
+				});
+			}
+
+			// Join all launched workers.
+			for (auto &w : workers) {
+				if (w.joinable()) {
+					w.join();
+				}
+			}
+
+			// Re-throw any worker exception on the calling thread.
+			if (first_error) {
+				std::rethrow_exception(first_error);
+			}
+		} else {
+			// Single full GET.
+			const auto full_download_result = hfs.GetRequest(*this, path, {});
+			if (full_download_result->status != HTTPStatusCode::OK_200) {
+				throw HTTPException(*full_download_result, "Full download failed to to URL \"%s\": %d (%s)",
+				                    full_download_result->url, static_cast<int>(full_download_result->status),
+				                    full_download_result->GetError());
+			}
 		}
-		// Mark the file as initialized, set its final length, and unlock it to allowing parallel reads
+
+		// Mark the file as initialized, set its final length, and unlock it to allow parallel reads.
 		cached_file_handle->SetInitialized(length);
 		// We shouldn't write these to cache
 		should_write_cache = false;
@@ -729,7 +837,8 @@ void HTTPFileHandle::LoadFileInfo() {
 			return;
 		} else {
 			// HEAD request fail, use Range request for another try (read only one byte)
-			if (flags.OpenForReading() && res->status != HTTPStatusCode::NotFound_404 && res->status != HTTPStatusCode::MovedPermanently_301) {
+			if (flags.OpenForReading() && res->status != HTTPStatusCode::NotFound_404 &&
+			    res->status != HTTPStatusCode::MovedPermanently_301) {
 				auto range_res = hfs.GetRangeRequest(*this, path, {}, 0, nullptr, 2);
 				if (range_res->status != HTTPStatusCode::PartialContent_206 &&
 				    range_res->status != HTTPStatusCode::Accepted_202 && range_res->status != HTTPStatusCode::OK_200) {
