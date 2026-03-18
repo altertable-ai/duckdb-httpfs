@@ -45,8 +45,14 @@ public:
 	void SetInitialized(idx_t total_size);
 	//! Grow buffer to new size, copying over `bytes_to_copy` to the new buffer
 	void GrowBuffer(idx_t new_capacity, idx_t bytes_to_copy);
-	//! Write to the buffer
+	//! Write to the buffer (requires initialization lock held by this handle)
 	void Write(const char *buffer, idx_t length, idx_t offset = 0);
+	//! Write directly at a known offset into an already-preallocated buffer.
+	//! Safe to call from multiple threads after AllocateBuffer() has been called,
+	//! as long as each thread writes to a non-overlapping offset range.
+	void WriteAtOffset(const char *buffer, idx_t length, idx_t offset);
+	//! Return raw mutable pointer for zero-copy parallel chunk writes
+	char *GetMutableData();
 
 	bool Initialized() {
 		return file->initialized;
