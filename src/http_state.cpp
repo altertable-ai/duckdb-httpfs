@@ -46,6 +46,17 @@ void CachedFileHandle::Write(const char *buffer, idx_t length, idx_t offset) {
 	memcpy(file->data.get() + offset, buffer, length);
 }
 
+void CachedFileHandle::WriteAtOffset(const char *buffer, idx_t length, idx_t offset) {
+	//! For parallel chunk writes: buffer must be preallocated (capacity > 0) and not yet finalized.
+	D_ASSERT(file->capacity > 0 && !file->initialized);
+	D_ASSERT(offset + length <= file->capacity);
+	memcpy(file->data.get() + offset, buffer, length);
+}
+
+char *CachedFileHandle::GetMutableData() {
+	return file->data.get();
+}
+
 void HTTPState::Reset() {
 	// Reset Counters
 	head_count = 0;

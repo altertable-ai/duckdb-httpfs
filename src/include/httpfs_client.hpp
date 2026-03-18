@@ -34,9 +34,19 @@ struct HTTPFSParams : public HTTPParams {
 	static constexpr uint64_t DEFAULT_HF_MAX_PER_PAGE = 0;
 	static constexpr bool DEFAULT_FORCE_DOWNLOAD = false;
 	static constexpr bool AUTO_FALLBACK_TO_FULL_DOWNLOAD = true;
+	//! Number of concurrent ranged GETs used when downloading a single file with force_download.
+	//! 1 means single-request behavior.
+	static constexpr uint64_t DEFAULT_HTTP_DOWNLOAD_MAX_CONCURRENCY = 8;
+	//! Files smaller than this threshold use a single full GET instead of parallel ranges.
+	static constexpr uint64_t DEFAULT_HTTP_DOWNLOAD_PARALLEL_THRESHOLD = 50 * 1024 * 1024; // 50 MB
+	//! Size of each individual ranged GET chunk when using parallel download.
+	static constexpr uint64_t DEFAULT_HTTP_DOWNLOAD_CHUNK_SIZE = 25 * 1024 * 1024; // 25 MB
 
 	bool force_download = DEFAULT_FORCE_DOWNLOAD;
 	bool auto_fallback_to_full_download = AUTO_FALLBACK_TO_FULL_DOWNLOAD;
+	uint64_t http_download_max_concurrency = DEFAULT_HTTP_DOWNLOAD_MAX_CONCURRENCY;
+	uint64_t http_download_parallel_threshold = DEFAULT_HTTP_DOWNLOAD_PARALLEL_THRESHOLD;
+	uint64_t http_download_chunk_size = DEFAULT_HTTP_DOWNLOAD_CHUNK_SIZE;
 	bool enable_server_cert_verification = DEFAULT_ENABLE_SERVER_CERT_VERIFICATION;
 	bool enable_curl_server_cert_verification = true;
 	idx_t hf_max_per_page = DEFAULT_HF_MAX_PER_PAGE;
