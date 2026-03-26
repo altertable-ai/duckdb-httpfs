@@ -114,6 +114,8 @@ static idx_t httpfs_client_count = 0;
 
 class HTTPFSCurlClient : public HTTPClient {
 public:
+	void Initialize(HTTPParams &http_params) override {
+	}
 	HTTPFSCurlClient(HTTPFSParams &http_params, const string &proto_host_port) {
 		auto bearer_token = "";
 		if (!http_params.bearer_token.empty()) {
