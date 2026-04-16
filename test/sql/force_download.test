@@ -1,0 +1,31 @@
+# name: test/sql/force_download.test
+# group: [sql]
+#
+# Regression test for a deadlock in HTTPFileHandle::FullDownload.
+# When length == 0, FullDownload called LoadFileInfo while still holding
+# the CachedFile lock (acquired via CachedFile::GetHandle), and LoadFileInfo
+# tried to re-acquire the same mutex -> self-deadlock.
+#
+# Trigger: SET force_download=true causes Initialize() to call FullDownload()
+# before LoadFileInfo() has populated `length`, so length is still 0 and
+# LoadFileInfo is re-entered under the cache-entry lock.
+
+require httpfs
+
+require-env PYTHON_HTTP_SERVER_URL
+
+require-env PYTHON_HTTP_SERVER_DIR
+
+statement ok
+COPY (SELECT 1 AS a, 2 AS b UNION ALL SELECT 3, 4) TO '${PYTHON_HTTP_SERVER_DIR}/force_download_test.csv' (HEADER true);
+
+statement ok
+SET force_download=true;
+
+query I
+SELECT count(*) FROM read_csv('${PYTHON_HTTP_SERVER_URL}/force_download_test.csv');
+----
+2
+
+statement ok
+RESET force_download;

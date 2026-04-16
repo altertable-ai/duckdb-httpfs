@@ -147,6 +147,8 @@ protected:
 	virtual unique_ptr<HTTPClient> CreateClient();
 	//! Perform a HEAD request to get the file info (if not yet loaded)
 	void LoadFileInfo();
+	//! Perform the HEAD request and populate length/etag/last_modified/version_id/initialized.
+	void LoadMetadataFromHead();
 
 	//! TODO: make base function virtual?
 	void TryAddLogger(FileOpener &opener);
