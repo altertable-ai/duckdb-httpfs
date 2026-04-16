@@ -754,8 +754,8 @@ void HTTPFileHandle::FullDownload(HTTPFileSystem &hfs, bool &should_write_cache)
 	if (!cached_file_handle->Initialized()) {
 		// If file size is not yet known, do a HEAD request now so we can decide whether parallel ranged GETs are
 		// worthwhile.
-		if (length == 0) {
-			LoadFileInfo();
+		if (length == 0 && !force_full_download) {
+			LoadMetadataFromHead();
 		}
 
 		const uint64_t concurrency = http_params.http_download_max_concurrency;
@@ -947,6 +947,10 @@ void HTTPFileHandle::LoadFileInfo() {
 		return;
 	}
 
+	LoadMetadataFromHead();
+}
+
+void HTTPFileHandle::LoadMetadataFromHead() {
 	auto &hfs = file_system.Cast<HTTPFileSystem>();
 	auto res = hfs.HeadRequest(*this, path, {});
 	if (res->status != HTTPStatusCode::OK_200) {
