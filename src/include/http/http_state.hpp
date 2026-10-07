@@ -176,6 +176,9 @@ public:
 	void Append(const_data_ptr_t data, idx_t length);
 	//! Reset bytes written by a prior request attempt
 	void Reset();
+	//! Allocate `length` bytes up front and count them as downloaded. Callers fill the returned buffer, possibly
+	//! from multiple threads as long as each writes a non-overlapping range
+	data_ptr_t Resize(idx_t length);
 	//! Indicate the file is fully downloaded and safe for parallel reading
 	unique_ptr<CachedFileHandle> Finalize(HTTPMetadataCacheEntry metadata);
 

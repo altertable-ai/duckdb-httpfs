@@ -122,6 +122,19 @@ void HTTPSettings::Register(DBConfig &config) {
 	config.AddExtensionOption("auto_fallback_to_full_download",
 	                          "Allows automatically falling back to full file downloads when possible.",
 	                          LogicalType::BOOLEAN, Value(true));
+	config.AddExtensionOption(
+	    "http_download_max_concurrency",
+	    "Maximum number of concurrent ranged HTTP GET requests used to download a single file when "
+	    "force_download=true. Setting to 1 disables parallel download and uses a single full GET.",
+	    LogicalType::UBIGINT, Value::UBIGINT(HTTPFSParams::DEFAULT_HTTP_DOWNLOAD_MAX_CONCURRENCY));
+	config.AddExtensionOption(
+	    "http_download_parallel_threshold",
+	    "Minimum file size in bytes above which parallel ranged download is used when force_download=true.",
+	    LogicalType::UBIGINT, Value::UBIGINT(HTTPFSParams::DEFAULT_HTTP_DOWNLOAD_PARALLEL_THRESHOLD));
+	config.AddExtensionOption(
+	    "http_download_chunk_size",
+	    "Size in bytes of each individual ranged GET chunk when using parallel download with force_download=true.",
+	    LogicalType::UBIGINT, Value::UBIGINT(HTTPFSParams::DEFAULT_HTTP_DOWNLOAD_CHUNK_SIZE));
 	config.AddExtensionOption("allow_asterisks_in_http_paths", "Allow '*' character in URLs users can query",
 	                          LogicalType::BOOLEAN, Value(false));
 	config.AddExtensionOption("enable_curl_server_cert_verification",

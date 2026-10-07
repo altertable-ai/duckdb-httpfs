@@ -61,6 +61,12 @@ public:
 	static constexpr uint64_t DEFAULT_HF_MAX_PER_PAGE = 0;
 	static constexpr bool DEFAULT_FORCE_DOWNLOAD = false;
 	static constexpr bool AUTO_FALLBACK_TO_FULL_DOWNLOAD = true;
+	//! Number of concurrent ranged GETs used when fully downloading a single file; 1 means a single full GET
+	static constexpr uint64_t DEFAULT_HTTP_DOWNLOAD_MAX_CONCURRENCY = 8;
+	//! Files smaller than this threshold use a single full GET instead of parallel ranges
+	static constexpr uint64_t DEFAULT_HTTP_DOWNLOAD_PARALLEL_THRESHOLD = 50 * 1024 * 1024; // 50 MB
+	//! Size of each individual ranged GET chunk when using parallel download
+	static constexpr uint64_t DEFAULT_HTTP_DOWNLOAD_CHUNK_SIZE = 25 * 1024 * 1024; // 25 MB
 
 	//! Runtime parameters; append new fields and propagate them to duckdb-wasm
 	bool force_download = DEFAULT_FORCE_DOWNLOAD;
@@ -77,6 +83,9 @@ public:
 	shared_ptr<HTTPState> state;
 	string user_agent = {""};
 	idx_t force_download_threshold = 0;
+	uint64_t http_download_max_concurrency = DEFAULT_HTTP_DOWNLOAD_MAX_CONCURRENCY;
+	uint64_t http_download_parallel_threshold = DEFAULT_HTTP_DOWNLOAD_PARALLEL_THRESHOLD;
+	uint64_t http_download_chunk_size = DEFAULT_HTTP_DOWNLOAD_CHUNK_SIZE;
 
 private:
 	friend class HTTPFSUtil;

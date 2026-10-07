@@ -102,6 +102,11 @@ private:
 		FileOpener::TryGetCurrentSetting(opener, "unsafe_disable_etag_checks", result->unsafe_disable_etag_checks,
 		                                 info);
 		FileOpener::TryGetCurrentSetting(opener, "s3_version_id_pinning", result->s3_version_id_pinning, info);
+		FileOpener::TryGetCurrentSetting(opener, "http_download_max_concurrency", result->http_download_max_concurrency,
+		                                 info);
+		FileOpener::TryGetCurrentSetting(opener, "http_download_parallel_threshold",
+		                                 result->http_download_parallel_threshold, info);
+		FileOpener::TryGetCurrentSetting(opener, "http_download_chunk_size", result->http_download_chunk_size, info);
 		auto context = FileOpener::TryGetClientContext(opener);
 		Value external_cache_enabled;
 		if (context &&
@@ -681,6 +686,9 @@ unique_ptr<CachedFileHandle> HTTPFileSystem::FullDownload(HTTPFileHandle &hfh, c
 		if (!download) {
 			continue;
 		}
+		if (TryParallelDownload(hfh, *download)) {
+			return download->Finalize(hfh.GetCacheEntry());
+		}
 		const auto request_time = Timestamp::GetCurrentTimestamp();
 		auto full_download_result = GetRequest(hfh, hfh.path, {}, read_config, *download);
 		ThrowIfReadConditionFailed(hfh, read_config, *full_download_result);
@@ -715,6 +723,105 @@ unique_ptr<CachedFileHandle> HTTPFileSystem::FullDownload(HTTPFileHandle &hfh, c
 		// so HTTP cache policy (no-store/Vary/freshness) does not restrict it.
 		return download->Finalize(std::move(metadata));
 	}
+}
+
+bool HTTPFileSystem::TryParallelDownload(HTTPFileHandle &hfh, CachedFileDownload &download) {
+	idx_t max_concurrency;
+	idx_t threshold;
+	idx_t chunk_size;
+	{
+		auto captured = hfh.request_session->Capture();
+		const auto &params = captured.snapshot->Params();
+		max_concurrency = params.http_download_max_concurrency;
+		threshold = params.http_download_parallel_threshold;
+		chunk_size = params.http_download_chunk_size;
+	}
+	if (max_concurrency <= 1 || chunk_size == 0 || hfh.force_full_download) {
+		return false;
+	}
+	if (!hfh.initialized) {
+		// The file size is not known yet (force_download skips the HEAD request): fetch it to decide whether parallel
+		// ranged GETs are worthwhile. The handle is only initialized from it when we go parallel, so the single GET
+		// fallback keeps using the GET response metadata.
+		timestamp_t request_time;
+		timestamp_t response_time;
+		unique_ptr<HTTPResponse> response;
+		try {
+			response = hfh.RequestFileInfo(*this, request_time, response_time);
+		} catch (std::exception &) {
+			// Parallel download is only an optimization: let the single full GET report any error
+			return false;
+		}
+		if (!response || hfh.force_full_download) {
+			return false;
+		}
+		auto metadata = hfh.ReadFileInfo(*response, request_time, response_time);
+		if (metadata.length == 0 || metadata.length < threshold) {
+			return false;
+		}
+		hfh.InitializeFromCacheEntry(metadata);
+	}
+	const auto length = hfh.length;
+	if (length == 0 || length < threshold) {
+		return false;
+	}
+
+	// Pin every chunk to the version observed by the HEAD request
+	const auto read_config = hfh.BuildReadConfig();
+	const auto buffer = download.Resize(length);
+	const idx_t chunk_count = (length + chunk_size - 1) / chunk_size;
+	const idx_t thread_count = MinValue<idx_t>(max_concurrency, chunk_count);
+
+	atomic<idx_t> next_chunk {0};
+	atomic<bool> stop {false};
+	atomic<bool> range_not_supported {false};
+	mutex error_lock;
+	std::exception_ptr error;
+	auto download_chunks = [&]() {
+		while (!stop) {
+			const auto chunk_idx = next_chunk++;
+			if (chunk_idx >= chunk_count) {
+				return;
+			}
+			const auto offset = chunk_idx * chunk_size;
+			const auto size = MinValue<idx_t>(chunk_size, length - offset);
+			try {
+				if (!TryRangeRequest(hfh, hfh.path, {}, read_config, offset, buffer + offset, size)) {
+					range_not_supported = true;
+					stop = true;
+				}
+			} catch (...) {
+				lock_guard<mutex> guard(error_lock);
+				if (!error) {
+					error = std::current_exception();
+				}
+				stop = true;
+			}
+		}
+	};
+
+	vector<thread> workers;
+	for (idx_t i = 1; i < thread_count; i++) {
+		try {
+			workers.emplace_back(download_chunks);
+		} catch (...) {
+			// Could not spawn more threads: the ones already running (and this one) pick up the remaining chunks
+			break;
+		}
+	}
+	download_chunks();
+	for (auto &worker : workers) {
+		worker.join();
+	}
+
+	if (error) {
+		std::rethrow_exception(error);
+	}
+	if (range_not_supported) {
+		download.Reset();
+		return false;
+	}
+	return true;
 }
 
 bool HTTPFileSystem::TryParseLastModifiedTime(const string &timestamp, timestamp_t &result) {

@@ -249,6 +249,9 @@ private:
 	void ValidateCachedFile(HTTPFileHandle &handle, const HTTPReadConfig &read_config, const CachedFileHandle &cached);
 	void ThrowIfReadConditionFailed(HTTPFileHandle &handle, const HTTPReadConfig &read_config,
 	                                const HTTPResponse &response);
+	//! Download a large file with concurrent ranged GETs into `download`; returns false (leaving `download` empty)
+	//! when parallel download is disabled, not worthwhile, or the server does not support range requests
+	bool TryParallelDownload(HTTPFileHandle &handle, CachedFileDownload &download);
 
 private:
 	//! Global metadata cache
