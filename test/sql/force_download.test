@@ -1,0 +1,46 @@
+# name: test/sql/force_download.test
+# group: [sql]
+#
+# Regression test for a self-deadlock in the parallel range download path of force_download: the file size is not
+# known yet when force_download skips the initial HEAD request, so the download path has to issue that HEAD itself
+# while it owns the file's download slot. It must not re-enter the cached-file synchronization while doing so.
+
+require httpfs
+
+require-env PYTHON_HTTP_SERVER_URL
+
+require-env PYTHON_HTTP_SERVER_DIR
+
+statement ok
+COPY (SELECT 1 AS a, 2 AS b UNION ALL SELECT 3, 4) TO '{PYTHON_HTTP_SERVER_DIR}/force_download_test.csv' (HEADER true);
+
+statement ok
+SET force_download=true;
+
+query I
+SELECT count(*) FROM read_csv('{PYTHON_HTTP_SERVER_URL}/force_download_test.csv');
+----
+2
+
+# Force the parallel ranged download path even for this tiny file; the test server does not support range requests,
+# so it must fall back to a single full GET
+statement ok
+SET http_download_parallel_threshold=1;
+
+statement ok
+SET http_download_chunk_size=4;
+
+query II
+SELECT * FROM read_csv('{PYTHON_HTTP_SERVER_URL}/force_download_test.csv') ORDER BY a;
+----
+1	2
+3	4
+
+statement ok
+RESET http_download_parallel_threshold;
+
+statement ok
+RESET http_download_chunk_size;
+
+statement ok
+RESET force_download;
