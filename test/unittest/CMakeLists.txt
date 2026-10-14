@@ -13,5 +13,6 @@ set_target_properties(unittest_httpfs PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                                  ${CMAKE_BINARY_DIR}/test)
 
 target_link_libraries(unittest_httpfs test_helpers duckdb_static)
-link_extension_libraries(unittest_httpfs "")
+# The statically linked extension list is only resolved after every extension is configured, so name them here
+duckdb_link_extensions(unittest_httpfs core_functions json parquet httpfs)
 link_threads(unittest_httpfs "")
