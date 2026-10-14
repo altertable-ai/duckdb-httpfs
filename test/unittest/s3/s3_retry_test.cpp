@@ -422,7 +422,7 @@ static void RunTransientGetRetryScenario(const string &client_implementation) {
 
 	S3TestHelper::RequireQueryOk(con, "SET http_retries=3");
 	S3TestHelper::RequireQueryOk(con, "SET http_retry_wait_ms=1");
-	S3TestHelper::RequireQueryOk(con, "SET force_download=true");
+	S3TestHelper::ForceFullGet(con);
 	S3TestHelper::RequireQueryOk(con, "BEGIN TRANSACTION");
 	auto &fs = FileSystem::GetFileSystem(*con.context);
 	auto handle = fs.OpenFile(S3TestHelper::S3_PATH, FileFlags::FILE_FLAGS_READ);
@@ -454,7 +454,11 @@ static void RunSharedReadBudgetScenario(const string &client, bool range, bool c
 	auto test_id = S3TestHelper::ConfigureRefresh(db, con, server, client, caching);
 	S3TestHelper::RequireQueryOk(con, "SET http_retries=" + to_string(retries));
 	S3TestHelper::RequireQueryOk(con, "SET http_retry_wait_ms=0");
-	S3TestHelper::RequireQueryOk(con, "SET force_download=" + string(range ? "false" : "true"));
+	if (range) {
+		S3TestHelper::RequireQueryOk(con, "SET force_download=false");
+	} else {
+		S3TestHelper::ForceFullGet(con);
+	}
 	S3TestHelper::RequireQueryOk(con, "BEGIN TRANSACTION");
 	auto read = [&]() {
 		auto &fs = FileSystem::GetFileSystem(*con.context);

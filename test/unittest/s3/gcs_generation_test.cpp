@@ -195,7 +195,7 @@ TEST_CASE("GCS concurrent forced downloads publish bytes and metadata together",
 		Connection con(db);
 		ConfigureGenerationTest(db, con, server, client, false);
 		S3TestHelper::RequireQueryOk(con, "SET enable_external_file_cache=false");
-		S3TestHelper::RequireQueryOk(con, "SET force_download=true");
+		S3TestHelper::ForceFullGet(con);
 		S3TestHelper::RequireQueryOk(con, "BEGIN");
 		auto &fs = FileSystem::GetFileSystem(*con.context);
 		vector<unique_ptr<FileHandle>> handles(2);
@@ -337,8 +337,11 @@ CREATE OR REPLACE SECRET generation_test (
 ))",
 				                                                     test_id, server.Endpoint(), test_id,
 				                                                     server.Endpoint()));
-				S3TestHelper::RequireQueryOk(con, string("SET force_download=") +
-				                                      (target == MockS3RefreshTarget::FULL_GET ? "true" : "false"));
+				if (target == MockS3RefreshTarget::FULL_GET) {
+					S3TestHelper::ForceFullGet(con);
+				} else {
+					S3TestHelper::RequireQueryOk(con, "SET force_download=false");
+				}
 				S3TestHelper::RequireQueryOk(con, "BEGIN");
 				auto &fs = FileSystem::GetFileSystem(*con.context);
 				const string selector = explicit_selection ? "?gcs_generation=123" : "";

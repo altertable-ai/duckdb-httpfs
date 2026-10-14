@@ -69,7 +69,7 @@ static void RunHeadRefreshScenario(const string &client_implementation, bool con
 static void RunFullGetRefreshScenario(const string &client_implementation, bool connection_caching) {
 	auto observations = RunRefreshScenario(MockS3RefreshTarget::FULL_GET, client_implementation, connection_caching,
 	                                       [](Connection &con, const string &object_data) {
-		                                       S3TestHelper::RequireQueryOk(con, "SET force_download=true");
+		                                       S3TestHelper::ForceFullGet(con);
 		                                       auto &fs = FileSystem::GetFileSystem(*con.context);
 		                                       auto handle =
 		                                           fs.OpenFile(S3TestHelper::S3_PATH, FileFlags::FILE_FLAGS_READ);
@@ -268,7 +268,7 @@ static void RunTokenFullGetRefreshScenario(const string &client_implementation, 
 	auto observations = RunRefreshScenario(
 	    MockS3RefreshTarget::FULL_GET, client_implementation, false,
 	    [](Connection &con, const string &) {
-		    S3TestHelper::RequireQueryOk(con, "SET force_download=true");
+		    S3TestHelper::ForceFullGet(con);
 		    auto &fs = FileSystem::GetFileSystem(*con.context);
 		    auto handle = fs.OpenFile(S3TestHelper::S3_PATH, FileFlags::FILE_FLAGS_READ);
 		    REQUIRE(handle);
@@ -306,7 +306,7 @@ static void RunNonAuth400NoRefreshScenario(const string &client_implementation) 
 	DuckDB db(nullptr);
 	Connection con(db);
 	auto test_id = S3TestHelper::ConfigureRefresh(db, con, server, client_implementation, false);
-	S3TestHelper::RequireQueryOk(con, "SET force_download=true");
+	S3TestHelper::ForceFullGet(con);
 	S3TestHelper::RequireQueryOk(con, "BEGIN TRANSACTION");
 	string error;
 	try {
@@ -682,7 +682,7 @@ TEST_CASE("Explicit S3 versions survive credential refresh", "[httpfs][s3][refre
 					    S3TestHelper::RequireQueryOk(con, "SET s3_version_id_pinning=false");
 					    S3TestHelper::RequireQueryOk(con, "SET enable_external_file_cache=false");
 					    if (full_download) {
-						    S3TestHelper::RequireQueryOk(con, "SET force_download=true");
+						    S3TestHelper::ForceFullGet(con);
 					    }
 					    auto &fs = FileSystem::GetFileSystem(*con.context);
 					    auto handle =

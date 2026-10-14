@@ -667,12 +667,48 @@ static optional_ptr<HTTPMetadataCache> TryGetMetadataCache(optional_ptr<FileOpen
 	return nullptr;
 }
 
+struct HTTPFileInfoParser {
+public:
+	static optional_idx TryParseContentRange(const HTTPHeaders &headers) {
+		if (!headers.HasHeader("Content-Range")) {
+			return {};
+		}
+		auto content_range = headers.GetHeaderValue("Content-Range");
+		auto range_find = content_range.find('/');
+		if (range_find == string::npos || content_range.size() < range_find + 1) {
+			return {};
+		}
+		auto range_length = content_range.substr(range_find + 1);
+		if (range_length == "*") {
+			return {};
+		}
+		return TryParseLength(range_length);
+	}
+
+	static optional_idx TryParseContentLength(const HTTPHeaders &headers) {
+		if (!headers.HasHeader("Content-Length")) {
+			return {};
+		}
+		return TryParseLength(headers.GetHeaderValue("Content-Length"));
+	}
+
+private:
+	static optional_idx TryParseLength(const string &input) {
+		try {
+			return NumericCast<idx_t>(std::stoull(input));
+		} catch (...) {
+			return {};
+		}
+	}
+};
+
 unique_ptr<CachedFileHandle> HTTPFileSystem::FullDownload(HTTPFileHandle &hfh, const HTTPReadConfig &read_config,
                                                           bool &should_write_cache) {
 	D_ASSERT(hfh.file_state);
 	D_ASSERT(hfh.buffer_allocator);
 	should_write_cache = false;
 
+	bool request_first_chunk = true;
 	while (true) {
 		if (auto cached_file = hfh.file_state->TryGetCachedFileHandle()) {
 			ValidateCachedFile(hfh, read_config, *cached_file);
@@ -689,8 +725,19 @@ unique_ptr<CachedFileHandle> HTTPFileSystem::FullDownload(HTTPFileHandle &hfh, c
 		if (TryParallelDownload(hfh, *download)) {
 			return download->Finalize(hfh.GetCacheEntry());
 		}
+		// When the file size is unknown, only request its first chunk: the response reveals the size, so a large
+		// file can be completed with parallel ranged GETs without a HEAD request first
+		auto get_config = read_config;
+		if (request_first_chunk) {
+			get_config.full_download_prefix_length = GetFirstChunkLength(hfh);
+		}
+		const auto first_chunk = get_config.full_download_prefix_length.IsValid();
 		const auto request_time = Timestamp::GetCurrentTimestamp();
-		auto full_download_result = GetRequest(hfh, hfh.path, {}, read_config, *download);
+		auto full_download_result = GetRequest(hfh, hfh.path, {}, get_config, *download);
+		if (first_chunk && full_download_result->status == HTTPStatusCode::RangeNotSatisfiable_416) {
+			request_first_chunk = false;
+			continue;
+		}
 		ThrowIfReadConditionFailed(hfh, read_config, *full_download_result);
 		if (full_download_result->HasRequestError()) {
 			ErrorData(full_download_result->GetRequestError()).Throw();
@@ -700,7 +747,8 @@ unique_ptr<CachedFileHandle> HTTPFileSystem::FullDownload(HTTPFileHandle &hfh, c
 			hfh.file_not_found = true;
 			return nullptr;
 		}
-		if (full_download_result->status != HTTPStatusCode::OK_200) {
+		const auto partial = first_chunk && full_download_result->status == HTTPStatusCode::PartialContent_206;
+		if (!partial && full_download_result->status != HTTPStatusCode::OK_200) {
 			throw GetHTTPError(hfh, *full_download_result, RequestType::GET_REQUEST, hfh.path);
 		}
 		auto metadata = hfh.ReadFileInfo(*full_download_result, request_time, Timestamp::GetCurrentTimestamp());
@@ -716,7 +764,13 @@ unique_ptr<CachedFileHandle> HTTPFileSystem::FullDownload(HTTPFileHandle &hfh, c
 		if (metadata.etag.empty() && read_config.condition.type == HTTPReadConditionType::ETAG) {
 			metadata.etag = read_config.condition.value;
 		}
-		if (!hfh.initialized) {
+		if (partial) {
+			if (!TryDownloadRemainingChunks(hfh, *full_download_result, metadata,
+			                                get_config.full_download_prefix_length.GetIndex(), *download)) {
+				request_first_chunk = false;
+				continue;
+			}
+		} else if (!hfh.initialized) {
 			hfh.InitializeFromCacheEntry(metadata);
 		}
 		// Publish unconditionally: this buffer is query-scoped and shared only among identical requests,
@@ -725,50 +779,83 @@ unique_ptr<CachedFileHandle> HTTPFileSystem::FullDownload(HTTPFileHandle &hfh, c
 	}
 }
 
-bool HTTPFileSystem::TryParallelDownload(HTTPFileHandle &hfh, CachedFileDownload &download) {
+struct ParallelDownloadParams {
 	idx_t max_concurrency;
 	idx_t threshold;
 	idx_t chunk_size;
-	{
-		auto captured = hfh.request_session->Capture();
-		const auto &params = captured.snapshot->Params();
-		max_concurrency = params.http_download_max_concurrency;
-		threshold = params.http_download_parallel_threshold;
-		chunk_size = params.http_download_chunk_size;
-	}
-	if (max_concurrency <= 1 || chunk_size == 0 || hfh.force_full_download) {
+};
+
+static ParallelDownloadParams GetParallelDownloadParams(HTTPFileHandle &hfh) {
+	auto captured = hfh.request_session->Capture();
+	const auto &params = captured.snapshot->Params();
+	return {params.http_download_max_concurrency, params.http_download_parallel_threshold,
+	        params.http_download_chunk_size};
+}
+
+bool HTTPFileSystem::TryParallelDownload(HTTPFileHandle &hfh, CachedFileDownload &download) {
+	if (!hfh.initialized || hfh.force_full_download) {
 		return false;
 	}
-	if (!hfh.initialized) {
-		// The file size is not known yet (force_download skips the HEAD request): fetch it to decide whether parallel
-		// ranged GETs are worthwhile. The handle is only initialized from it when we go parallel, so the single GET
-		// fallback keeps using the GET response metadata.
-		timestamp_t request_time;
-		timestamp_t response_time;
-		unique_ptr<HTTPResponse> response;
-		try {
-			response = hfh.RequestFileInfo(*this, request_time, response_time);
-		} catch (std::exception &) {
-			// Parallel download is only an optimization: let the single full GET report any error
-			return false;
-		}
-		if (!response || hfh.force_full_download) {
-			return false;
-		}
-		auto metadata = hfh.ReadFileInfo(*response, request_time, response_time);
-		if (metadata.length == 0 || metadata.length < threshold) {
-			return false;
-		}
-		hfh.InitializeFromCacheEntry(metadata);
+	const auto params = GetParallelDownloadParams(hfh);
+	if (params.max_concurrency <= 1 || params.chunk_size == 0) {
+		return false;
 	}
 	const auto length = hfh.length;
-	if (length == 0 || length < threshold) {
+	if (length == 0 || length < params.threshold) {
 		return false;
 	}
 
-	// Pin every chunk to the version observed by the HEAD request
-	const auto read_config = hfh.BuildReadConfig();
+	// Pin every chunk to the version the handle was opened with
 	const auto buffer = download.Resize(length);
+	if (!DownloadRanges(hfh, hfh.BuildReadConfig(), buffer, 0, length, params.chunk_size, params.max_concurrency)) {
+		download.Reset();
+		return false;
+	}
+	return true;
+}
+
+optional_idx HTTPFileSystem::GetFirstChunkLength(HTTPFileHandle &hfh) {
+	if (hfh.initialized || hfh.force_full_download) {
+		return optional_idx();
+	}
+	const auto params = GetParallelDownloadParams(hfh);
+	if (params.max_concurrency <= 1 || params.chunk_size == 0) {
+		return optional_idx();
+	}
+	return params.chunk_size;
+}
+
+bool HTTPFileSystem::TryDownloadRemainingChunks(HTTPFileHandle &hfh, const HTTPResponse &response,
+                                                const HTTPMetadataCacheEntry &metadata, idx_t first_chunk_length,
+                                                CachedFileDownload &download) {
+	const auto total = HTTPFileInfoParser::TryParseContentRange(response.headers);
+	const auto received = download.GetSize();
+	if (!total.IsValid() || received != MinValue<idx_t>(first_chunk_length, total.GetIndex())) {
+		return false;
+	}
+	D_ASSERT(metadata.length == total.GetIndex());
+	if (!hfh.initialized) {
+		hfh.InitializeFromCacheEntry(metadata);
+	}
+	const auto length = total.GetIndex();
+	if (received == length) {
+		return true;
+	}
+
+	// Below the threshold, the rest of the file is fetched with one more GET
+	const auto params = GetParallelDownloadParams(hfh);
+	const auto remaining = length - received;
+	const auto parallel = length >= params.threshold;
+	const auto chunk_size = parallel ? params.chunk_size : remaining;
+	const auto max_concurrency = parallel ? params.max_concurrency : 1;
+	// Pin every chunk to the version the first chunk was read from
+	const auto buffer = download.Extend(length);
+	return DownloadRanges(hfh, hfh.BuildReadConfig(), buffer, received, remaining, chunk_size, max_concurrency);
+}
+
+bool HTTPFileSystem::DownloadRanges(HTTPFileHandle &hfh, const HTTPReadConfig &read_config, data_ptr_t buffer,
+                                    idx_t offset, idx_t length, idx_t chunk_size, idx_t max_concurrency) {
+	D_ASSERT(chunk_size > 0);
 	const idx_t chunk_count = (length + chunk_size - 1) / chunk_size;
 	const idx_t thread_count = MinValue<idx_t>(max_concurrency, chunk_count);
 
@@ -783,10 +870,11 @@ bool HTTPFileSystem::TryParallelDownload(HTTPFileHandle &hfh, CachedFileDownload
 			if (chunk_idx >= chunk_count) {
 				return;
 			}
-			const auto offset = chunk_idx * chunk_size;
-			const auto size = MinValue<idx_t>(chunk_size, length - offset);
+			const auto chunk_offset = chunk_idx * chunk_size;
+			const auto size = MinValue<idx_t>(chunk_size, length - chunk_offset);
 			try {
-				if (!TryRangeRequest(hfh, hfh.path, {}, read_config, offset, buffer + offset, size)) {
+				if (!TryRangeRequest(hfh, hfh.path, {}, read_config, offset + chunk_offset,
+				                     buffer + offset + chunk_offset, size)) {
 					range_not_supported = true;
 					stop = true;
 				}
@@ -817,11 +905,7 @@ bool HTTPFileSystem::TryParallelDownload(HTTPFileHandle &hfh, CachedFileDownload
 	if (error) {
 		std::rethrow_exception(error);
 	}
-	if (range_not_supported) {
-		download.Reset();
-		return false;
-	}
-	return true;
+	return !range_not_supported;
 }
 
 bool HTTPFileSystem::TryParseLastModifiedTime(const string &timestamp, timestamp_t &result) {
@@ -1035,41 +1119,6 @@ bool HTTPFileHandle::CanReuseCachedData() const {
 	annotated_lock_guard<annotated_mutex> guard(cache_policy_lock);
 	return !cache_valid_until || Timestamp::GetCurrentTimestamp() < *cache_valid_until;
 }
-
-struct HTTPFileInfoParser {
-public:
-	static optional_idx TryParseContentRange(const HTTPHeaders &headers) {
-		if (!headers.HasHeader("Content-Range")) {
-			return {};
-		}
-		auto content_range = headers.GetHeaderValue("Content-Range");
-		auto range_find = content_range.find('/');
-		if (range_find == string::npos || content_range.size() < range_find + 1) {
-			return {};
-		}
-		auto range_length = content_range.substr(range_find + 1);
-		if (range_length == "*") {
-			return {};
-		}
-		return TryParseLength(range_length);
-	}
-
-	static optional_idx TryParseContentLength(const HTTPHeaders &headers) {
-		if (!headers.HasHeader("Content-Length")) {
-			return {};
-		}
-		return TryParseLength(headers.GetHeaderValue("Content-Length"));
-	}
-
-private:
-	static optional_idx TryParseLength(const string &input) {
-		try {
-			return NumericCast<idx_t>(std::stoull(input));
-		} catch (...) {
-			return {};
-		}
-	}
-};
 
 bool HTTPFileHandle::TryLoadFileInfoWithoutRequest() {
 	D_ASSERT(file_state);

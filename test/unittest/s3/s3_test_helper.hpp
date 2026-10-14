@@ -23,6 +23,8 @@ public:
 	static void LoadExtension(DuckDB &db);
 	static void RegisterRefreshProvider(DuckDB &db);
 	static void RequireQueryOk(Connection &con, const string &query);
+	//! Download files fully with a single unranged GET, without first requesting their first chunk
+	static void ForceFullGet(Connection &con);
 	static string NextTestId();
 	static CreateSecretInput CreateTransactionRefreshInput(const string &test_id);
 	static string ConfigureRefresh(DuckDB &db, Connection &con, MockS3Server &server,

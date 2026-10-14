@@ -179,6 +179,11 @@ public:
 	//! Allocate `length` bytes up front and count them as downloaded. Callers fill the returned buffer, possibly
 	//! from multiple threads as long as each writes a non-overlapping range
 	data_ptr_t Resize(idx_t length);
+	//! Grow to `length` bytes, keeping the bytes downloaded so far and counting the new ones as downloaded. Callers
+	//! fill the bytes past the previous size, possibly from multiple threads, each writing a non-overlapping range
+	data_ptr_t Extend(idx_t length);
+	//! Number of downloaded bytes
+	idx_t GetSize() const;
 	//! Indicate the file is fully downloaded and safe for parallel reading
 	unique_ptr<CachedFileHandle> Finalize(HTTPMetadataCacheEntry metadata);
 

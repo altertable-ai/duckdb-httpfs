@@ -2,6 +2,7 @@ target_sources(
   unittest_httpfs
   PRIVATE mock_s3_server.cpp
           gcs_generation_test.cpp
+          s3_first_chunk_download_test.cpp
           s3_refresh_test.cpp
           s3_request_test.cpp
           s3_retry_test.cpp

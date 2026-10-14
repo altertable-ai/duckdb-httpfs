@@ -72,7 +72,7 @@ static void RunFullGetErrorBodyScenario(const string &client_implementation) {
 	Connection con(db);
 	auto test_id = S3TestHelper::ConfigureRefresh(db, con, server, client_implementation, false, false);
 
-	S3TestHelper::RequireQueryOk(con, "SET force_download=true");
+	S3TestHelper::ForceFullGet(con);
 	S3TestHelper::RequireQueryOk(con, "BEGIN TRANSACTION");
 	string error;
 	try {
@@ -106,7 +106,7 @@ static void RunChunkedFullGetScenario(const string &client_implementation) {
 	Connection con(db);
 	auto test_id = S3TestHelper::ConfigureRefresh(db, con, server, client_implementation, false);
 
-	S3TestHelper::RequireQueryOk(con, "SET force_download=true");
+	S3TestHelper::ForceFullGet(con);
 	S3TestHelper::RequireQueryOk(con, "BEGIN TRANSACTION");
 	auto &fs = FileSystem::GetFileSystem(*con.context);
 	auto handle = fs.OpenFile(S3TestHelper::S3_PATH, FileFlags::FILE_FLAGS_READ);

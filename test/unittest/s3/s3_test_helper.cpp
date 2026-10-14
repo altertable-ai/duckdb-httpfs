@@ -164,6 +164,11 @@ void S3TestHelper::RequireQueryOk(Connection &con, const string &query) {
 	REQUIRE_FALSE(result->HasError());
 }
 
+void S3TestHelper::ForceFullGet(Connection &con) {
+	RequireQueryOk(con, "SET force_download=true");
+	RequireQueryOk(con, "SET http_download_max_concurrency=1");
+}
+
 string S3TestHelper::NextTestId() {
 	static std::atomic<idx_t> next_id(0);
 	return StringUtil::Format("httpfs_refresh_test_%llu", static_cast<unsigned long long>(++next_id));

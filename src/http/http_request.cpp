@@ -76,12 +76,21 @@ unique_ptr<HTTPResponse> HTTPFileSystem::RunGetRequest(HTTPFileHandle &hfh, cons
                                                        const HTTPSendCallback &send_request) {
 	auto request_headers = PrepareFullGetHeaders(header_map, read_config);
 	http_params.extra_headers.erase("Range");
+	const auto &prefix_length = read_config.full_download_prefix_length;
+	if (prefix_length.IsValid()) {
+		D_ASSERT(prefix_length.GetIndex() > 0);
+		request_headers["Range"] = "bytes=0-" + to_string(prefix_length.GetIndex() - 1);
+	}
 	const auto request_time = Timestamp::GetCurrentTimestamp();
 	GetRequestInfo get_request(
 	    url, request_headers, http_params,
 	    [&](const HTTPResponse &response) {
 		    if (response.status == HTTPStatusCode::PreconditionFailed_412 &&
 		        read_config.condition.type != HTTPReadConditionType::NONE) {
+			    return false;
+		    }
+		    if (response.status == HTTPStatusCode::RangeNotSatisfiable_416 && prefix_length.IsValid()) {
+			    // Servers reject any range of an empty file: let FullDownload request it whole
 			    return false;
 		    }
 		    if (response.status == HTTPStatusCode::NotFound_404 && !hfh.initialized &&
