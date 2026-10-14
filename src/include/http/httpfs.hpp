@@ -30,6 +30,9 @@ struct HTTPReadConfig {
 	string etag;
 	bool validate_etag = false;
 	bool auto_fallback_to_full_download = false;
+	//! Full GETs only request this many leading bytes when set, so the response reveals the file size through its
+	//! Content-Range without a HEAD request. A server ignoring the range still answers with the whole file
+	optional_idx full_download_prefix_length;
 };
 
 class RangeRequestNotSupportedException {
@@ -249,9 +252,23 @@ private:
 	void ValidateCachedFile(HTTPFileHandle &handle, const HTTPReadConfig &read_config, const CachedFileHandle &cached);
 	void ThrowIfReadConditionFailed(HTTPFileHandle &handle, const HTTPReadConfig &read_config,
 	                                const HTTPResponse &response);
-	//! Download a large file with concurrent ranged GETs into `download`; returns false (leaving `download` empty)
-	//! when parallel download is disabled, not worthwhile, or the server does not support range requests
+	//! Download a large file of known size with concurrent ranged GETs into `download`; returns false (leaving
+	//! `download` empty) when the size is unknown, parallel download is disabled or not worthwhile, or the server does
+	//! not support range requests
 	bool TryParallelDownload(HTTPFileHandle &handle, CachedFileDownload &download);
+	//! Length of the first chunk to request when fully downloading a file of unknown size, invalid when the file
+	//! should be downloaded with a single GET
+	optional_idx GetFirstChunkLength(HTTPFileHandle &handle);
+	//! Download the rest of a file whose first `first_chunk_length` bytes were requested and answered by `response`
+	//! (206 Partial Content, described by `metadata`) into `download`; returns false when the response or the server
+	//! does not allow completing the file with ranged GETs
+	bool TryDownloadRemainingChunks(HTTPFileHandle &handle, const HTTPResponse &response,
+	                                const HTTPMetadataCacheEntry &metadata, idx_t first_chunk_length,
+	                                CachedFileDownload &download);
+	//! Fill `length` bytes of `buffer` from `offset` onward with up to `max_concurrency` concurrent ranged GETs of
+	//! `chunk_size` bytes; returns false when the server does not support range requests
+	bool DownloadRanges(HTTPFileHandle &handle, const HTTPReadConfig &read_config, data_ptr_t buffer, idx_t offset,
+	                    idx_t length, idx_t chunk_size, idx_t max_concurrency);
 
 private:
 	//! Global metadata cache

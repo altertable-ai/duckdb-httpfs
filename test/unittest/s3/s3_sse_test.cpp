@@ -89,7 +89,11 @@ CREATE OR REPLACE SECRET %s (
 }
 
 static string ReadOneByte(Connection &con, const string &path, bool force_download) {
-	S3TestHelper::RequireQueryOk(con, StringUtil::Format("SET force_download=%s", force_download ? "true" : "false"));
+	if (force_download) {
+		S3TestHelper::ForceFullGet(con);
+	} else {
+		S3TestHelper::RequireQueryOk(con, "SET force_download=false");
+	}
 	auto &fs = FileSystem::GetFileSystem(*con.context);
 	auto flags = FileFlags::FILE_FLAGS_READ;
 	if (!force_download) {

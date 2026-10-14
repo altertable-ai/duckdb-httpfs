@@ -137,7 +137,12 @@ static bool ParseRange(const string &range, idx_t object_size, idx_t &start, idx
 	} catch (...) {
 		return false;
 	}
-	return start <= end && end < object_size;
+	if (start > end || start >= object_size) {
+		return false;
+	}
+	// Like S3 and GCS, serve a range extending past the object up to its end
+	end = MinValue<idx_t>(end, object_size - 1);
+	return true;
 }
 
 static bool ConsumeBehavior(atomic<idx_t> &remaining) {

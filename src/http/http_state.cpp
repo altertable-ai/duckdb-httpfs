@@ -110,6 +110,17 @@ data_ptr_t CachedFileDownload::Resize(idx_t length) {
 	return data.get();
 }
 
+data_ptr_t CachedFileDownload::Extend(idx_t length) {
+	D_ASSERT(length >= size);
+	ReserveInternal(length);
+	size = length;
+	return data.get();
+}
+
+idx_t CachedFileDownload::GetSize() const {
+	return size;
+}
+
 unique_ptr<CachedFileHandle> CachedFileDownload::Finalize(HTTPMetadataCacheEntry metadata) {
 	metadata.length = size;
 	auto cached_data = make_shared_ptr<CachedFileData>(std::move(data), std::move(metadata));
