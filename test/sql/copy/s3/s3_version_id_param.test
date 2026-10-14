@@ -43,6 +43,9 @@ statement ok
 CREATE TABLE T2 AS SELECT i*i AS i FROM range(200) tbl(i);
 
 statement ok
+SET redact_http_logs=false;
+
+statement ok
 CALL enable_logging('HTTP');
 
 # Write T1 to S3 (must have versioning enabled) and capture the version header
