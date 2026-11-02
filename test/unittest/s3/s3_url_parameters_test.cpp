@@ -293,7 +293,10 @@ TEST_CASE("HTTPFS caches S3 question-mark paths under a stable URL policy", "[ht
 				const auto observations = server.Observations();
 				if (force_download) {
 					REQUIRE(S3TestHelper::CountObservations(observations, "HEAD", "id", 200) == 0);
-					REQUIRE(S3TestHelper::CountObservations(observations, "GET", "id", 200) == 1);
+					// The size is unknown, so the download asks for the first chunk only; it covers this object, which
+					// the server sends whole as a 206
+					REQUIRE(S3TestHelper::CountObservations(observations, "GET", "id", 200) == 0);
+					REQUIRE(S3TestHelper::CountObservations(observations, "GET", "id", 206) == 1);
 				} else {
 					REQUIRE(S3TestHelper::CountObservations(observations, "HEAD", "id", 200) == 1);
 					auto writer = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE);
