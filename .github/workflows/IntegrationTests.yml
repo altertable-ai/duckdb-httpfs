@@ -26,6 +26,10 @@ jobs:
       VCPKG_TARGET_TRIPLET: x64-linux
       PYTHON_HTTP_SERVER_URL: http://localhost:8008
       PYTHON_HTTP_SERVER_DIR: /tmp/python_test_server
+      HEAD_FORBIDDEN_SERVER_URL: http://localhost:8009
+      # The default 60 s per batch is sized for duckdb's namespace runners; glob_s3_parallel.test_slow
+      # alone takes about that long on ubuntu-latest.
+      TEST_MINIO_FLAGS: ${{ github.repository_owner == 'duckdb' && '--track-runtime=30 --batch-timeout=60' || '--track-runtime=30 --batch-timeout=180' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -62,6 +66,17 @@ jobs:
           mkdir -p "$PYTHON_HTTP_SERVER_DIR"
           cd "$PYTHON_HTTP_SERVER_DIR"
           python3 -m http.server 8008 &
+
+      - name: Run HEAD-forbidden test server
+        shell: bash
+        run: |
+          python3 scripts/run_head_forbidden_server.py 8009 &
+          for i in $(seq 1 20); do
+            curl -sf -o /dev/null http://localhost:8009/generations && exit 0
+            sleep 0.5
+          done
+          echo "HEAD-forbidden test server did not start" >&2
+          exit 1
 
       - name: Build
         shell: bash

@@ -6,5 +6,13 @@ require httpfs
 
 require json
 
+# scripts/run_head_forbidden_server.py refuses HEAD with 401 and sends GET bodies chunked, without a length
+require-env HEAD_FORBIDDEN_SERVER_URL
+
 statement ok
-FROM read_json('https://api.spring.io/projects/spring-boot/generations')
+FROM read_json('{HEAD_FORBIDDEN_SERVER_URL}/generations')
+
+query I
+SELECT len(_embedded.generations) FROM read_json('{HEAD_FORBIDDEN_SERVER_URL}/generations')
+----
+32
