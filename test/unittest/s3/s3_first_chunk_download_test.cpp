@@ -90,8 +90,7 @@ TEST_CASE("Forced downloads below the parallel threshold fetch the rest with one
 	}
 }
 
-TEST_CASE("Forced downloads of files within the first chunk take a single GET",
-          "[httpfs][s3][first-chunk-download]") {
+TEST_CASE("Forced downloads of files within the first chunk take a single GET", "[httpfs][s3][first-chunk-download]") {
 	for (const string client : {"curl", "httplib"}) {
 		CAPTURE(client);
 		MockS3ServerConfig config;

@@ -1,5 +1,6 @@
 # name: test/sql/force_download.test
 # group: [sql]
+
 #
 # Regression test for the parallel range download path of force_download: the file size is not known yet when
 # force_download skips the initial HEAD request, so the download only requests the first chunk to learn it, while it
