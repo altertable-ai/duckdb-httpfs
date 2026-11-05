@@ -22,8 +22,14 @@ COPY lineitem TO 'test/test_data/presigned-url-lineitem.parquet' (FORMAT 'parque
 
 EOF
 )
-$DUCKDB_PATH -c "$generate_large_parquet_query"
+$DUCKDB_PATH -unsigned -c "$generate_large_parquet_query"
 
 # Generate Storage Version
-$DUCKDB_PATH  test/test_data/attach.db < duckdb/test/sql/storage_version/generate_storage_version.sql
-$DUCKDB_PATH  test/test_data/lineitem_sf1.db -c "CALL dbgen(sf=1)"
+# Attach with STORAGE_VERSION 'latest' so the fixture is written in a storage
+# version that supports the current test_all_types() (which now includes an empty
+# STRUCT column, unsupported prior to storage v2.0.0). Piping the script into a
+# default v1.0.0 database aborts the CREATE TABLE all_types transaction, which
+# drops integral_values/all_types/test3 and breaks attach_httpfs/attach_s3.
+{ echo "ATTACH 'test/test_data/attach.db' AS db (STORAGE_VERSION 'latest'); USE db;"; \
+  cat duckdb/test/sql/storage_version/generate_storage_version.sql; } | $DUCKDB_PATH :memory:
+$DUCKDB_PATH -unsigned test/test_data/lineitem_sf1.db -c "CALL dbgen(sf=1)"
