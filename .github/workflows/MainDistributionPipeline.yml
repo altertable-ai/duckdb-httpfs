@@ -17,7 +17,7 @@ jobs:
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v2.0-cyanoptera
     with:
       extension_name: httpfs
-      duckdb_version: v2.0.0
+      duckdb_version: 03bbf5adcb196cf05f4f46b15ba3daf655a9b5b2
       ci_tools_version: v2.0-cyanoptera
 
   code-quality:
@@ -25,7 +25,7 @@ jobs:
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v2.0-cyanoptera
     with:
       extension_name: httpfs
-      duckdb_version: v2.0.0
+      duckdb_version: 03bbf5adcb196cf05f4f46b15ba3daf655a9b5b2
       ci_tools_version: v2.0-cyanoptera
       extra_toolchains: 'python3'
       format_checks: 'format'
